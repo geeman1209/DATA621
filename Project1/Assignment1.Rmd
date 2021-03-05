@@ -9,11 +9,18 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-library(corrplot)
 library(tidyverse)
 library(Hmisc)
 library(PerformanceAnalytics)
 library(corrplot)
+library(gt)
+library(gtsummary)
+library(corrr)
+library(bnstruct)
+library(VIM)
+library(mice)
+library(DMwR)
+library(caret)
 ```
 
 
@@ -80,8 +87,6 @@ Figure 1 :  Summary Statistics
 \end{center}
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
-library(tidyverse)
-library(gtsummary)
 wins <- train_data %>% select(TARGET_WINS, TEAM_BATTING_H, TEAM_BATTING_2B, TEAM_BATTING_3B, TEAM_BATTING_HR, TEAM_BATTING_BB, TEAM_BATTING_HBP, TEAM_BATTING_SO, TEAM_BASERUN_SB, TEAM_BASERUN_CS, TEAM_FIELDING_E, TEAM_FIELDING_DP, TEAM_PITCHING_BB, TEAM_PITCHING_SO, TEAM_FIELDING_E, TEAM_FIELDING_DP)
 table1 <- tbl_summary(wins,
           statistic = list(all_continuous() ~ "{mean} ({sd}) {median} {min} {max}"), missing = "no") 
@@ -121,7 +126,6 @@ Now in order to build our models properly It's worth exploring for other columns
 
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
-library(gt)
 max_obs <- 2276
 batting_so_na <- ((102/max_obs) * 100)
 baserun_sb_na <- (131/max_obs) * 100
@@ -173,8 +177,6 @@ the other 12 variables have a significant skew. The response variable Target_win
 It is possible that not all variables will need to be used in creating an accurate model. In Figure 4, a correlation value is computed for each variable against target wins. Some variables are highly correlated with target wins, while other variables are not. For example, Base Hits by batters has a value of 0.38877 which is high while Caught stealing is barely correlated with target wins with a value of 0.0224.There is also a column for p-values which indicates whether the correlations are significant. We can use a decision rule of 95% meaning any variable with a p-value of less than 0.05 is significant. It appears that Strikeouts by batters (TEAM_BATTING_SO),Caught stealing(TEAM_BASERUN_CS), Batters hit by pitch (TEAM_BATTING_HBP), and Double plays (TEAM_FIELDING_DP)do not meet our decision rule and could be excluded from use.
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
-library(corrr)
-library(ggplot2)
 
 COR <- train_data %>% 
   correlate() %>% 
@@ -282,12 +284,121 @@ Log Transformation
 
 ### MODEL 4 
 
-BoxCox Transformation
+Predicted Mean Matching
+
+```{r}
+train_data_impute <- select(train_data, -c(INDEX, TEAM_BATTING_HBP))
+
+```
+
+```{r}
+imp_mult <- mice(train_data_impute, m=5, method = "pmm")
+td_impute <- complete(imp_mult)
+```
+
+```{r}
+summary(td_impute)
+```
+
+
+```{r}
+train.control <- trainControl(method ='cv', number=10)
+
+step_td.model <- train(TARGET_WINS ~., data = td_impute,
+                    method = "leapSeq",
+                    tuneGrid = data.frame(nvmax = 2:13),
+                    trControl = train.control
+                    )
+```
+
+```{r}
+step_td.model$results
+
+```
+
+```{r}
+step_td.model$bestTune
+```
+
+```{r}
+summary(step_td.model$finalModel)
+```
+
+```{r}
+coef(step_td.model$finalModel, 6)
+
+```
+
+```{r}
+pmm_lm <- lm(formula = TARGET_WINS ~ TEAM_BATTING_H + TEAM_BATTING_HR + TEAM_BATTING_SO + TEAM_BASERUN_SB + TEAM_FIELDING_E + TEAM_FIELDING_DP, data = td_impute)
+
+summary(pmm_lm)
+
+```
+
+```{r}
+hist(pmm_lm$residuals, xlab = "Residuals", ylab = "", breaks=100)
+qqnorm(pmm_lm$residuals)
+qqline(pmm_lm$residuals)
+
+```
 
 ### MODEL 5 
 
 kNN Imputation
+```{r, include=FALSE}
+#documentation on knn.impute: https://rdrr.io/cran/DMwR/man/knnImputation.html
 
+#article: https://www.edureka.co/blog/knn-algorithm-in-r/
+#article: https://towardsdatascience.com/6-different-ways-to-compensate-for-missing-values-data-imputation-with-examples-6022d9ca0779
+
+#using default values
+knn_data <- knnImputation(train_data_impute)
+
+summary(knn_data)
+```
+
+Building the stepwise regression model with knn imputed values
+```{r}
+train.control <- trainControl(method ='cv', number=10)
+
+step.model <- train(TARGET_WINS ~., data = knn_data,
+                    method = "leapSeq",
+                    tuneGrid = data.frame(nvmax = 2:13),
+                    trControl = train.control
+                    )
+```
+
+```{r}
+step.model$results
+
+```
+
+```{r}
+step.model$bestTune
+```
+
+```{r}
+summary(step.model$finalModel)
+```
+```{r}
+coef(step.model$finalModel, 6)
+
+```
+
+```{r}
+knn_lm <- lm(formula = TARGET_WINS ~ TEAM_BATTING_H + TEAM_BATTING_SO + TEAM_BASERUN_SB + TEAM_PITCHING_HR + TEAM_FIELDING_E + TEAM_FIELDING_DP, data = knn_data)
+
+summary(knn_lm)
+
+```
+
+```{r}
+hist(knn_lm$residuals, xlab = "Residuals", ylab = "", breaks=100)
+qqnorm(knn_lm$residuals)
+qqline(knn_lm$residuals)
+
+```
 ## Select A Model
 
 ## Appendix 
